@@ -1,6 +1,6 @@
 PWD := $(shell pwd)
 
-export PROJECT_NAME=bitlight-local-env
+export PROJECT_NAME=bitrgb
 export BITCOIN_COMPOSE_PROJECT_NAME=$(PROJECT_NAME)-bitcoin
 export LND_COMPOSE_PROJECT_NAME=$(PROJECT_NAME)-lnd
 export NETWORK_NAME=regtest

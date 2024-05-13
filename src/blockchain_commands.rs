@@ -3,6 +3,8 @@ use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use structopt::StructOpt;
 
+use crate::Addr;
+
 #[derive(StructOpt)]
 pub struct Mint {
     #[structopt(default_value = "1")]
@@ -27,6 +29,46 @@ pub fn mint(args: Mint) {
             "/cli/active.sh",
             "mint",
             &args.blocks.to_string(),
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("Failed to execute command");
+
+    if let Some(ref mut stdout) = child.stdout {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            println!("{}", line.unwrap());
+        }
+    }
+
+    let exit_status = child.wait().expect("Failed to wait on child");
+
+    if !exit_status.success() {
+        eprintln!("Command executed with error");
+        std::process::exit(1);
+    }
+}
+
+pub fn send(addr: Addr) {
+    let project_name = env::var("BITCOIN_COMPOSE_PROJECT_NAME")
+        .expect("BITCOIN_COMPOSE_PROJECT_NAME environment variable is not set");
+    let addr = addr.addr;
+
+    println!("send to {}", addr);
+
+    let mut child = Command::new("docker-compose")
+        .args([
+            "-p",
+            &project_name,
+            "exec",
+            "-it",
+            "-w",
+            "/cli",
+            "bitcoin-core",
+            "/cli/active.sh",
+            "send",
+            &addr,
+            "1",
         ])
         .stdout(Stdio::piped())
         .spawn()

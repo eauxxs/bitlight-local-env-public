@@ -114,6 +114,7 @@ services:
       - bitcoin-data:/data/.bitcoin
     ports:
       - "${API_PORT}:3000"
+      - "${ELECTRUM_PORT:-60401}:60401"
 
   wallet-alice:
     networks:

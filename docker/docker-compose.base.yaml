@@ -24,7 +24,7 @@ services:
       - NETWORK=regtest
 
   esplora:
-    image: ${DOCKER_NS:-bitlightlabs}/esplora:${DOCKER_TAG:-latest}
+    # image: ${DOCKER_NS:-bitlightlabs}/esplora:${DOCKER_TAG:-latest}
     build:
       context: esplora
 

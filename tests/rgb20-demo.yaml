@@ -1,0 +1,18 @@
+interface: RGB20Fixed
+
+globals:
+  spec:
+    ticker: DBG
+    name: Debug asset
+    details: "Pay attention: the asset has no value"
+    precision: 2
+  terms:
+    text: >
+      TEXT
+    media: ~
+  issuedSupply: 100000000
+
+assignments:
+  assetOwner:
+    seal: tapret1st:b7ed7e15be56f51bf90aca0ff547193901b9493b777bc2802a49f6cafeb09788:0
+    amount: 100000000 # this is 1 million (we have two digits for cents)
