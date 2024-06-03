@@ -1,20 +1,20 @@
-use std::{collections::HashMap, env, str::FromStr};
-
 use assert_cmd::Command;
+use bdk::bitcoin::psbt::PartiallySignedTransaction;
 use bdk::{
     bitcoin::bip32::{DerivationPath, KeySource},
     blockchain::EsploraBlockchain,
-    database::{BatchDatabase, MemoryDatabase},
-    keys::{DerivableKey, DescriptorKey, ExtendedKey},
-    miniscript::Segwitv0,
-    SignOptions, SyncOptions,
+    database::{BatchDatabase, Database, MemoryDatabase},
+    keys::{DerivableKey, DescriptorKey, ExtendedKey, GeneratableKey},
+    miniscript::{BareCtx, Segwitv0},
+    LocalUtxo, SignOptions, SyncOptions,
 };
-use bp::dbc::Method;
+use bp::Sats;
+use bp::{dbc::Method, SeqNo};
 use bpstd::{Wpkh, XpubDerivable};
 use bpwallet::{Runtime, WalletUtxo};
 use dotenv::dotenv;
 use esplora::Builder;
-use psbt::Psbt;
+use psbt::{Psbt, PsbtConstructor};
 use rgb::{
     containers::{BuilderSeal, Transfer, UniversalFile, ValidContract},
     invoice::{Beneficiary, RgbInvoice, RgbInvoiceBuilder, XChainNet},
@@ -24,7 +24,8 @@ use rgb::{
     StateType, TapretKey, TransferParams, XChain,
 };
 use rgbstd::persistence::Stock;
-use strict_encoding::FieldName;
+use std::{collections::HashMap, env, str::FromStr};
+use strict_encoding::{FieldName, TypeName};
 use strict_types::StrictVal;
 
 fn create_wallet(xpub: &str, ty: DescType) -> Runtime<RgbDescr> {
@@ -143,6 +144,100 @@ fn create_contract(
     }
 
     builder.issue_contract().unwrap()
+}
+
+fn get_vout_invoice(
+    iface: &str,
+    w: &Runtime<RgbDescr>,
+    contract_id: ContractId,
+    amount: u64,
+) -> RgbInvoice {
+    let addr = w.addresses(RgbKeychain::Rgb).next().unwrap().addr;
+    let bene = Beneficiary::WitnessVout(addr.payload);
+    let iface_name = TypeName::try_from(iface.to_owned()).expect("invalid interface name");
+    RgbInvoiceBuilder::new(XChainNet::bitcoin(bpstd::Network::Regtest, bene))
+        .set_contract(contract_id)
+        .set_interface(iface_name)
+        .set_amount_raw(amount)
+        .finish()
+}
+#[test]
+fn swap() {
+    let mut w = repare_wallet(DescType::Taproot, DescType::Taproot, DescType::Taproot);
+    let w_alice = &mut w.alice.rgb;
+    let w_bob = &mut w.bob.rgb;
+    let mut stock = create_stock();
+
+    // alice_utxo
+    let utxo = w_alice
+        .all_utxos()
+        .find(|u| RgbKeychain::contains_rgb(u.terminal.keychain))
+        .unwrap();
+
+    // issue contract A
+    println!("utxo: {:#?}", utxo);
+    let c_rna = create_contract(&stock, &utxo, Method::TapretFirst, "RNA", 1000);
+    let c_rna_id = c_rna.contract_id();
+    println!("contractid: {}", c_rna_id);
+
+    let mut any_resolver = AnyResolver::esplora_blocking(ESPLORA_URL).unwrap();
+    stock.import_contract(c_rna, &mut any_resolver).unwrap();
+
+    let invb = get_vout_invoice("RGB20Fixed", &w_bob, c_rna_id, 10);
+    let param = TransferParams::with(400_u64.into(), 0_u64.into());
+    let (mut psbt, meta) = w_alice
+        .construct_psbt_rgb(&mut stock, &[invb.clone()], param)
+        .unwrap();
+    println!("{:#?}", meta);
+    let bob_utxo = w_bob.all_utxos().next().unwrap();
+    // use psbt::PsbtConstructor;
+    psbt.construct_input_expect(
+        psbt::Prevout::new(bob_utxo.outpoint, bob_utxo.value),
+        w_bob.wallet().descriptor(),
+        bob_utxo.terminal,
+        SeqNo::from_consensus_u32(0),
+    );
+
+    let alice_out = psbt.input(0).unwrap().previous_outpoint;
+    let amount = &mut psbt.output_mut(0).unwrap().amount;
+    println!("amount: {}", amount);
+    // assert!(*amount == Sats::ZERO);
+    // alice's amount
+    let alice_utxo = w_alice
+        .all_utxos()
+        .find(|u| u.outpoint == alice_out)
+        .unwrap();
+    *amount += 10000_u64.into();
+    // *amount += alice_utxo.value;
+    *amount -= 100_u64.into();
+    // bob's amount
+    psbt.output_mut(1).unwrap().amount = bob_utxo.value - 10000_u64.into();
+    psbt.complete_construction();
+    let r = w_alice.transfer(&mut stock, &[invb], &mut psbt).unwrap();
+
+    w.alice.bdk.to_sync();
+    assert!(w
+        .alice
+        .bdk
+        .database()
+        .iter_utxos()
+        .unwrap()
+        .into_iter()
+        .any(|x: LocalUtxo| x.outpoint.to_string()
+            == psbt.input(0).unwrap().previous_outpoint.to_string()));
+    let mut pa = sign_psbt(&w.alice.bdk, &psbt);
+    let pb = sign_psbt(&w.bob.bdk, &psbt);
+    pa.combine(pb).unwrap();
+    println!("{:#?}", pa.clone().extract_tx());
+    only_broad_psbt(pa);
+    w_alice.to_sync();
+    w_bob.to_sync();
+    println!("{:#?}", psbt.to_unsigned_tx());
+
+    accept_consign(&mut stock, r);
+    w_alice.to_sync();
+    w_bob.to_sync();
+    print_history(&stock, w_alice, w_bob, &w.dave.rgb);
 }
 
 #[test]
@@ -298,6 +393,23 @@ fn accept_consign(stock: &mut Stock, transfers: Vec<Transfer>) {
     }
 }
 
+fn sign_psbt(w: &bdk::Wallet<MemoryDatabase>, psbt: &Psbt) -> PartiallySignedTransaction {
+    let mut p =
+        PartiallySignedTransaction::from_str(psbt.to_base64_ver(psbt::PsbtVer::V0).as_str())
+            .unwrap();
+
+    let mut opts = SignOptions::default();
+    opts.trust_witness_utxo = true;
+    let f = w.sign(&mut p, opts).unwrap();
+    println!("%%%%%%% {:#?}", f);
+    p
+}
+
+fn only_broad_psbt(p: PartiallySignedTransaction) {
+    let esplora = EsploraBlockchain::new(ESPLORA_URL, 10);
+    esplora.broadcast(&p.extract_tx()).unwrap();
+}
+
 fn broad_psbt(w: &bdk::Wallet<MemoryDatabase>, psbt: &Psbt) {
     use bdk::bitcoin::psbt::PartiallySignedTransaction;
     let mut p =
@@ -308,6 +420,7 @@ fn broad_psbt(w: &bdk::Wallet<MemoryDatabase>, psbt: &Psbt) {
     opts.trust_witness_utxo = true;
     let finalized = w.sign(&mut p, opts).unwrap();
     assert!(finalized);
+    println!("{:#?}", p.clone().extract_tx());
 
     let esplora = EsploraBlockchain::new(ESPLORA_URL, 10);
     esplora.broadcast(&p.extract_tx()).unwrap();
@@ -399,11 +512,11 @@ fn repare_wallet(alice: DescType, bob: DescType, dave: DescType) -> TestWallet {
         let derived_xprv = xprv.derive_priv(&secp, &path).unwrap();
         let origin: KeySource = (xprv.fingerprint(&secp), path);
 
-        let derived_xprv_desc_key: DescriptorKey<Segwitv0> = derived_xprv
+        let derived_xprv_desc_key: DescriptorKey<BareCtx> = derived_xprv
             .into_descriptor_key(Some(origin), DerivationPath::default())
             .unwrap();
 
-        if let DescriptorKey::<Segwitv0>::Secret(desc_seckey, _, _) = derived_xprv_desc_key {
+        if let DescriptorKey::<BareCtx>::Secret(desc_seckey, _, _) = derived_xprv_desc_key {
             let desc_pubkey = desc_seckey.to_public(&secp).unwrap();
             let xprv9 = desc_seckey.to_string().replace("/*", "/9/*");
             let xprv10 = desc_seckey.to_string().replace("/*", "/10/*");
@@ -418,6 +531,7 @@ fn repare_wallet(alice: DescType, bob: DescType, dave: DescType) -> TestWallet {
         .into_iter()
         .zip([alice, bob, dave])
         .map(|(mne, ty)| {
+            println!("***************");
             let (xprv9, xprv10, xpub) = parse_mne(mne, ty);
 
             let mut rgb = create_wallet(&xpub, ty);
@@ -430,8 +544,12 @@ fn repare_wallet(alice: DescType, bob: DescType, dave: DescType) -> TestWallet {
                 let mut cmd = Command::cargo_bin("bitlight-local-env").unwrap();
                 cmd.arg("send").arg(addr.to_string()).assert().success();
                 mint();
-                std::thread::sleep(std::time::Duration::from_secs(1));
+                println!("send btc to {}", addr);
+                std::thread::sleep(std::time::Duration::from_secs(5));
                 rgb.to_sync();
+                assert!(rgb
+                    .all_utxos()
+                    .any(|u| RgbKeychain::contains_rgb(u.terminal.keychain)));
             }
 
             let mut bdk = bdk::Wallet::new(
@@ -442,7 +560,7 @@ fn repare_wallet(alice: DescType, bob: DescType, dave: DescType) -> TestWallet {
             )
             .unwrap();
             bdk.to_sync();
-            // assert!(bdk.list_unspent().unwrap().len() > 0);
+            assert!(bdk.list_unspent().unwrap().len() > 0);
             Wlt { rgb, bdk }
         })
         .collect::<Vec<_>>();

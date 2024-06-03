@@ -26,7 +26,10 @@ psbt = { version = "0.11.0-beta.5", features = ["client-side-validation"] }
 bp-wallet = { version = "0.11.0-beta.5" , features = ["all"]}
 rgb-std = { version = "0.11.0-beta.5", features = ["fs"] }
 rgb-interfaces = "0.11.0-beta.5"
-rgb-runtime = { git = "https://github.com/eauxxs/rgb", branch = "dev" }
+# rgb-runtime = { git = "https://github.com/eauxxs/rgb", branch = "dev" , features = ["serde"]}
+rgb-runtime = { path = "/home/deepln/rgb/rgb", features = ["serde"]}
+thiserror = "1.0.61"
+bip39 = {version = "2.0.0", features = ["rand"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"
@@ -43,12 +46,13 @@ bp-core = { git = "https://github.com/BP-WG/bp-core", branch = "master" }
 bp-invoice = { git = "https://github.com/BP-WG/bp-std", branch = "develop" }
 bp-derive = { git = "https://github.com/BP-WG/bp-std", branch = "develop" }
 bp-std = { git = "https://github.com/BP-WG/bp-std", branch = "develop" }
-bp-wallet = { git = "https://github.com/BP-WG/bp-wallet", branch = "develop" }
+# bp-wallet = { git = "https://github.com/BP-WG/bp-wallet", branch = "develop" }
+bp-wallet = { path = "/home/deepln/rgb/bp-wallet" }
 psbt = { git = "https://github.com/BP-WG/bp-std", branch = "develop" }
 descriptors = { git = "https://github.com/BP-WG/bp-std", branch = "develop" }
 aluvm = { git = "https://github.com/AluVM/rust-aluvm", branch = "develop" }
 rgb-core = { git = "https://github.com/RGB-WG/rgb-core", branch = "develop" }
-rgb-std = { git = "https://github.com/eauxxs/rgb-std", branch = "dev" }
+rgb-std = { path = "/home/deepln/rgb/rgb-std" }
 rgb-invoice = { git = "https://github.com/eauxxs/rgb-std", branch = "dev" }
 rgb-interfaces = { git = "https://github.com/RGB-WG/rgb-interfaces", branch = "develop" }
 

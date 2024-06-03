@@ -39,6 +39,7 @@ dependencies = [
  "half",
  "paste",
  "ripemd",
+ "serde",
  "sha2",
  "strict_encoding",
  "strict_types",
@@ -357,6 +358,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93f2635620bf0b9d4576eb7bb9a38a55df78bd1205d26fa994b25911a69f212f"
 dependencies = [
  "bitcoin_hashes 0.11.0",
+ "rand",
+ "rand_core",
  "serde",
  "unicode-normalization",
 ]
@@ -438,6 +441,7 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "bdk",
+ "bip39",
  "bp-core",
  "bp-electrum",
  "bp-esplora",
@@ -457,6 +461,7 @@ dependencies = [
  "strict_encoding",
  "strict_types",
  "structopt",
+ "thiserror",
  "tokio",
 ]
 
@@ -507,6 +512,7 @@ dependencies = [
  "bp-seals",
  "commit_verify",
  "getrandom",
+ "serde",
  "single_use_seals",
  "strict_encoding",
  "strict_types",
@@ -523,6 +529,7 @@ dependencies = [
  "bp-consensus",
  "commit_verify",
  "secp256k1 0.29.0",
+ "serde",
  "strict_encoding",
 ]
 
@@ -598,6 +605,7 @@ dependencies = [
  "bp-dbc",
  "commit_verify",
  "rand",
+ "serde",
  "single_use_seals",
  "strict_encoding",
 ]
@@ -619,7 +627,6 @@ dependencies = [
 [[package]]
 name = "bp-wallet"
 version = "0.11.0-beta.5"
-source = "git+https://github.com/BP-WG/bp-wallet?branch=develop#03bb754618f99351d56f5f972a62f0580292a8e8"
 dependencies = [
  "amplify",
  "base64 0.21.7",
@@ -777,6 +784,7 @@ dependencies = [
  "commit_encoding_derive",
  "rand",
  "ripemd",
+ "serde",
  "sha2",
  "strict_encoding",
  "strict_types",
@@ -2147,6 +2155,7 @@ dependencies = [
  "getrandom",
  "mime",
  "secp256k1-zkp",
+ "serde",
  "single_use_seals",
  "strict_encoding",
  "strict_types",
@@ -2172,7 +2181,6 @@ dependencies = [
 [[package]]
 name = "rgb-invoice"
 version = "0.11.0-beta.5"
-source = "git+https://github.com/eauxxs/rgb-std?branch=dev#7ad91ed137630fcfd28e5508aa3ca604396cec77"
 dependencies = [
  "amplify",
  "baid64",
@@ -2183,6 +2191,7 @@ dependencies = [
  "percent-encoding",
  "rand",
  "rgb-core",
+ "serde",
  "strict_encoding",
  "strict_types",
 ]
@@ -2190,7 +2199,6 @@ dependencies = [
 [[package]]
 name = "rgb-psbt"
 version = "0.11.0-beta.5"
-source = "git+https://github.com/eauxxs/rgb?branch=dev#72014cac683d076cab21be029b248dd5cd833092"
 dependencies = [
  "amplify",
  "baid64",
@@ -2207,7 +2215,6 @@ dependencies = [
 [[package]]
 name = "rgb-runtime"
 version = "0.11.0-beta.5"
-source = "git+https://github.com/eauxxs/rgb?branch=dev#72014cac683d076cab21be029b248dd5cd833092"
 dependencies = [
  "amplify",
  "baid64",
@@ -2221,13 +2228,14 @@ dependencies = [
  "indexmap 2.2.6",
  "rgb-psbt",
  "rgb-std",
+ "serde",
+ "serde_yaml",
  "strict_types",
 ]
 
 [[package]]
 name = "rgb-std"
 version = "0.11.0-beta.5"
-source = "git+https://github.com/eauxxs/rgb-std?branch=dev#7ad91ed137630fcfd28e5508aa3ca604396cec77"
 dependencies = [
  "aluvm",
  "amplify",
@@ -2242,6 +2250,7 @@ dependencies = [
  "rand",
  "rgb-core",
  "rgb-invoice",
+ "serde",
  "strict_encoding",
  "strict_types",
  "wasm-bindgen",
@@ -2413,6 +2422,7 @@ checksum = "d24b59d129cdadea20aea4fb2352fa053712e5d713eee47d700cd4b2bc002f10"
 dependencies = [
  "rand",
  "secp256k1-sys 0.9.2",
+ "serde",
 ]
 
 [[package]]
@@ -2463,6 +2473,7 @@ dependencies = [
  "rand",
  "secp256k1 0.28.2",
  "secp256k1-zkp-sys",
+ "serde",
 ]
 
 [[package]]
@@ -2705,6 +2716,7 @@ source = "git+https://github.com/strict-types/strict-encoding?branch=develop#901
 dependencies = [
  "amplify",
  "half",
+ "serde",
  "strict_encoding_derive",
 ]
 
@@ -2730,8 +2742,12 @@ dependencies = [
  "baid64",
  "half",
  "indexmap 2.2.6",
+ "serde",
+ "serde_json",
+ "serde_yaml",
  "sha2",
  "strict_encoding",
+ "toml",
  "vesper-lang",
 ]
 
@@ -2880,18 +2896,18 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.60"
+version = "1.0.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "579e9083ca58dd9dcf91a9923bb9054071b9ebbd800b342194c9feb0ee89fc18"
+checksum = "c546c80d6be4bc6a00c0f01730c08df82eaa7a7a61f11d656526506112cc1709"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.60"
+version = "1.0.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2470041c06ec3ac1ab38d0356a6119054dedaea53e12fbefc0de730a1c08524"
+checksum = "46c3384250002a6d5af4d114f2845d37b57521033f30d5c3f46c4d70e1197533"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3560,3 +3576,8 @@ name = "zeroize"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "525b4ec142c6b68a2d10f01f7bbf6755599ca3f81ea53b8431b7dd348f5fdb2d"
+
+[[patch.unused]]
+name = "rgb-invoice"
+version = "0.11.0-beta.5"
+source = "git+https://github.com/eauxxs/rgb-std?branch=dev#7ad91ed137630fcfd28e5508aa3ca604396cec77"
