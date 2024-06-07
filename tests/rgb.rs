@@ -275,7 +275,7 @@ fn combine() {
         "alice utxo: {:?}",
         w_alice.all_utxos().collect::<HashSet<_>>()
     );
-    // issue contract A
+    // alice issue contract A
     let c_dna = create_contract(&stock, &utxo_alice, Method::OpretFirst, "DNA", 1000);
     let c_dna_id = c_dna.contract_id();
     println!("contractid: {}", c_dna_id);
@@ -288,16 +288,34 @@ fn combine() {
         .all_utxos()
         .find(|u| RgbKeychain::contains_rgb(u.terminal.keychain))
         .unwrap();
-    // issue contract B
+    // bob issue contract B
     let c_rna = create_contract(&stock, &utxo_bob, Method::OpretFirst, "RNA", 1000);
     let c_rna_id = c_rna.contract_id();
     println!("contractid: {}", c_rna_id);
     stock.import_contract(c_rna, &mut any_resolver).unwrap();
 
-    let invb = get_vout_invoice("RGB20Fixed", &w_bob, c_dna_id, 10);
-    let mut param = TransferParams::with(400_u64.into(), 0_u64.into());
+    // 我们把手续费和基于地址的rgb转账都设置为0, 模拟让buyer来出手续费
+    let mut param = TransferParams::with(0_u64.into(), 0_u64.into());
+    // keychain必须是Rgbkeychain，否则资产会丢失，也不完全丢失，只是在0 or 1 keychain上
     param.tx.change_keychain = RgbKeychain::Rgb.into();
+    // 构建seller的psbt
+    let (mut rpsbt, _meta) = w_alice
+        .construct_psbt(vec![utxo_alice.into_outpoint()], vec![], param.tx)
+        .unwrap();
+    // must set the sighash type, 0x82
+    rpsbt.input_mut(0).unwrap().sighash_type = Some(SighashType {
+        flag: SighashFlag::None,
+        anyone_can_pay: true,
+    });
+
+    // since here we have to sign the psbt, we need to set the sighash type, and upload psbt
+    let mut pa = sign_psbt(&w.alice.bdk, &rpsbt);
+
+    // 下面是bob 相当于buyer构建psbt的过程
     use psrgbt::Beneficiary as RgbBeneficiary;
+
+    // 首先我们先构建一个bob的invoice
+    let invb = get_vout_invoice("RGB20Fixed", &w_bob, c_dna_id, 10);
     let beneficiary = match invb.beneficiary.into_inner() {
         Beneficiary::BlindedSeal(_) => panic!("invalid beneficiary"),
         Beneficiary::WitnessVout(payload) => RgbBeneficiary::new(
@@ -305,28 +323,17 @@ fn combine() {
             param.min_amount,
         ),
     };
-    let (mut psbt, _meta) = w_alice
-        .construct_psbt(
-            vec![utxo_alice.into_outpoint()],
-            vec![&beneficiary],
-            param.tx,
-        )
-        .unwrap();
+    // add bob's output
+    rpsbt.construct_output_expect(beneficiary.script_pubkey(), Sats::ZERO);
 
-    // let beneficiary_script = match invb.beneficiary.into_inner() {
-    //     Beneficiary::WitnessVout(script) => script,
-    //     _ => panic!("invalid beneficiary"),
-    // };
-    psbt.input_mut(0).unwrap().sighash_type = Some(SighashType {
-        flag: SighashFlag::None,
-        anyone_can_pay: true,
-    });
+    // sort outputs, make sure the alice's change output is the first one
+    rpsbt.sort_outputs_by(|o| Reverse(o.amount)).unwrap();
+    // just asset, 确保alice的change output是第一个
+    assert!(rpsbt.output(0).unwrap().amount != Sats::ZERO);
+    assert!(rpsbt.output(1).unwrap().amount == Sats::ZERO);
 
-    psbt.sort_outputs_by(|o| Reverse(o.amount)).unwrap();
-    assert!(psbt.output(0).unwrap().amount != Sats::ZERO);
-    assert!(psbt.output(1).unwrap().amount == Sats::ZERO);
-
-    let alice_change_address = psbt.output(0).unwrap().script.clone();
+    // 从psbt里面获取alice的change地址, 用于构建alice的invoice
+    let alice_change_address = rpsbt.output(0).unwrap().script.clone();
     let alice_change_address =
         Address::with(&alice_change_address, invb.address_network()).unwrap();
 
@@ -335,6 +342,7 @@ fn combine() {
         utxo_alice.outpoint.txid,
         utxo_alice.outpoint.vout,
     );
+    // 获取dna的batch, 也就是alice发行合约的batch
     let mut batch_dna = stock
         .compose(
             &[invb.clone()],
@@ -345,25 +353,24 @@ fn combine() {
         )
         .unwrap();
 
-    // println!("dna###### {}", prev_output.outpoint().unwrap());
-    // for i in batch_dna.clone() {
-    //     println!("{:#?}", i);
-    // }
+    // alice的对于bob发行的rna token的invoice
     let inva = get_address_invoice("RGB20Fixed", alice_change_address, c_rna_id, 20);
-    // use psbt::PsbtConstructor;
-    let _input = psbt.construct_input_expect(
+    // psbt加上bob的input
+    let _input = rpsbt.construct_input_expect(
         psbt::Prevout::new(utxo_bob.outpoint, utxo_bob.value),
         w_bob.wallet().descriptor(),
         utxo_bob.terminal,
         SeqNo::from_consensus_u32(u32::MAX),
     );
-    psbt.output_mut(1).unwrap().amount = utxo_bob.value - 300_u64.into();
+    // 让bob来出手续费
+    rpsbt.output_mut(1).unwrap().amount = utxo_bob.value - 300_u64.into();
 
     let prev_output = ExplicitSeal::with(
         Method::OpretFirst,
         utxo_bob.outpoint.txid,
         utxo_bob.outpoint.vout,
     );
+    // 获取rna的batch, 也就是bob发行的合约
     let batch_rna = stock
         .compose(
             &[inva.clone()],
@@ -373,34 +380,47 @@ fn combine() {
             |_, _, _| Some(Vout::from_u32(1)),
         )
         .unwrap();
-    // println!("rna###### {}", prev_output.outpoint().unwrap());
-    // for i in batch_rna.clone() {
-    //     println!("{:#?}", i);
-    // }
-    // combine commitments
+    // combine batch
     batch_dna.blanks.extend(batch_rna).unwrap();
-    let output = psbt.construct_output_expect(ScriptPubkey::op_return(&[]), Sats::ZERO);
+
+    // 我们使用opret1st，所以构建一个op_return的output
+    let output = rpsbt.construct_output_expect(ScriptPubkey::op_return(&[]), Sats::ZERO);
+    // 标记rgb承诺位置
     output.set_opret_host().expect("just created");
-    psbt.complete_construction();
-    // println!("combine######");
-    // for i in batch_dna.clone() {
-    //     println!("{:#?}", i);
-    // }
+    // 完成unsigned_tx的构建
+    rpsbt.complete_construction();
+
     use psrgbt::RgbPsbt;
-    psbt.rgb_embed(batch_dna).unwrap();
+    // 把合并完的batch嵌入到psbt里面
+    rpsbt.rgb_embed(batch_dna).unwrap();
 
     let _consignment = w_alice
-        .transfer(&mut stock, &[inva, invb], &mut psbt)
+        .transfer(&mut stock, &[inva, invb], &mut rpsbt)
         .unwrap();
 
-    let mut pa = sign_psbt(&w.alice.bdk, &psbt);
-    let pb = sign_psbt(&w.bob.bdk, &psbt);
-    pa.combine(pb).unwrap();
-    // println!("{:#?}", pa.clone());
+    let pb = sign_psbt(&w.bob.bdk, &rpsbt);
+
+    // 为了使得alice和bob的psbt一致，我们需要把bob的psbt的output和input都加到alice的psbt里面
+    pa.unsigned_tx.input.push(pb.unsigned_tx.input[1].clone());
+    pa.unsigned_tx.output.push(pb.unsigned_tx.output[1].clone());
+    pa.unsigned_tx.output.push(pb.unsigned_tx.output[2].clone());
+    pa.inputs.push(pb.inputs[1].clone());
+    pa.outputs.push(pb.outputs[1].clone());
+    pa.outputs.push(pb.outputs[2].clone());
+    match pa.combine(pb) {
+        Ok(_) => {}
+        Err(e) => {
+            println!("{:#?}", e);
+            panic!("combine failed");
+        }
+    }
+    // 广播
     only_broad_psbt(pa);
-    // w_alice.to_sync();
-    // w_bob.to_sync();
+    // stock 接受 consignment
     accept_consign(&mut stock, _consignment);
+    // 挖一个块，使得交易生效
+    mint();
+    // 下面是同步钱包并打印rgb资产消息
     w_alice.to_sync();
     w_bob.to_sync();
     println!(
