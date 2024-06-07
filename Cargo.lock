@@ -454,6 +454,7 @@ dependencies = [
  "psbt",
  "reqwest 0.12.4",
  "rgb-interfaces",
+ "rgb-psbt 0.11.0-beta.5 (git+https://github.com/eauxxs/rgb?branch=dev)",
  "rgb-runtime",
  "rgb-std",
  "serde",
@@ -2213,6 +2214,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rgb-psbt"
+version = "0.11.0-beta.5"
+source = "git+https://github.com/eauxxs/rgb?branch=dev#72014cac683d076cab21be029b248dd5cd833092"
+dependencies = [
+ "amplify",
+ "baid64",
+ "bp-core",
+ "bp-std",
+ "commit_verify",
+ "getrandom",
+ "psbt",
+ "rgb-std",
+ "strict_encoding",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "rgb-runtime"
 version = "0.11.0-beta.5"
 dependencies = [
@@ -2226,7 +2244,7 @@ dependencies = [
  "commit_verify",
  "descriptors",
  "indexmap 2.2.6",
- "rgb-psbt",
+ "rgb-psbt 0.11.0-beta.5",
  "rgb-std",
  "serde",
  "serde_yaml",

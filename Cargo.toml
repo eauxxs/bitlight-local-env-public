@@ -26,8 +26,9 @@ psbt = { version = "0.11.0-beta.5", features = ["client-side-validation"] }
 bp-wallet = { version = "0.11.0-beta.5" , features = ["all"]}
 rgb-std = { version = "0.11.0-beta.5", features = ["fs"] }
 rgb-interfaces = "0.11.0-beta.5"
-# rgb-runtime = { git = "https://github.com/eauxxs/rgb", branch = "dev" , features = ["serde"]}
+rgb-psbt = { git = "https://github.com/eauxxs/rgb", branch = "dev" , features = ["serde"]}
 rgb-runtime = { path = "/home/deepln/rgb/rgb", features = ["serde"]}
+# apsbt = { package = "psbt", path = "/home/deepln/rgb/rgb" }
 thiserror = "1.0.61"
 bip39 = {version = "2.0.0", features = ["rand"] }
 

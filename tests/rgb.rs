@@ -4,13 +4,13 @@ use bdk::{
     bitcoin::bip32::{DerivationPath, KeySource},
     blockchain::EsploraBlockchain,
     database::{BatchDatabase, Database, MemoryDatabase},
-    keys::{DerivableKey, DescriptorKey, ExtendedKey, GeneratableKey},
-    miniscript::{BareCtx, Segwitv0},
+    keys::{DerivableKey, DescriptorKey, ExtendedKey},
+    miniscript::BareCtx,
     LocalUtxo, SignOptions, SyncOptions,
 };
-use bp::Sats;
 use bp::{dbc::Method, SeqNo};
-use bpstd::{Wpkh, XpubDerivable};
+use bp::{Sats, ScriptPubkey, SighashFlag, SighashType, Vout};
+use bpstd::{Address, Wpkh, XpubDerivable};
 use bpwallet::{Runtime, WalletUtxo};
 use dotenv::dotenv;
 use esplora::Builder;
@@ -24,6 +24,9 @@ use rgb::{
     StateType, TapretKey, TransferParams, XChain,
 };
 use rgbstd::persistence::Stock;
+use seals::txout::ExplicitSeal;
+use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::{collections::HashMap, env, str::FromStr};
 use strict_encoding::{FieldName, TypeName};
 use strict_types::StrictVal;
@@ -161,6 +164,20 @@ fn get_vout_invoice(
         .set_amount_raw(amount)
         .finish()
 }
+fn get_address_invoice(
+    iface: &str,
+    addr: Address,
+    contract_id: ContractId,
+    amount: u64,
+) -> RgbInvoice {
+    let bene = Beneficiary::WitnessVout(addr.payload);
+    let iface_name = TypeName::try_from(iface.to_owned()).expect("invalid interface name");
+    RgbInvoiceBuilder::new(XChainNet::bitcoin(bpstd::Network::Regtest, bene))
+        .set_contract(contract_id)
+        .set_interface(iface_name)
+        .set_amount_raw(amount)
+        .finish()
+}
 #[test]
 fn swap() {
     let mut w = repare_wallet(DescType::Taproot, DescType::Taproot, DescType::Taproot);
@@ -198,15 +215,15 @@ fn swap() {
         SeqNo::from_consensus_u32(0),
     );
 
-    let alice_out = psbt.input(0).unwrap().previous_outpoint;
+    let _alice_out = psbt.input(0).unwrap().previous_outpoint;
     let amount = &mut psbt.output_mut(0).unwrap().amount;
     println!("amount: {}", amount);
     // assert!(*amount == Sats::ZERO);
     // alice's amount
-    let alice_utxo = w_alice
-        .all_utxos()
-        .find(|u| u.outpoint == alice_out)
-        .unwrap();
+    // let alice_utxo = w_alice
+    //     .all_utxos()
+    //     .find(|u| u.outpoint == alice_out)
+    //     .unwrap();
     *amount += 10000_u64.into();
     // *amount += alice_utxo.value;
     *amount -= 100_u64.into();
@@ -237,6 +254,159 @@ fn swap() {
     accept_consign(&mut stock, r);
     w_alice.to_sync();
     w_bob.to_sync();
+    print_history(&stock, w_alice, w_bob, &w.dave.rgb);
+}
+
+#[test]
+fn combine() {
+    let mut w = repare_wallet(DescType::Segwitv0, DescType::Segwitv0, DescType::Segwitv0);
+    let w_alice = &mut w.alice.rgb;
+    let w_bob = &mut w.bob.rgb;
+    let _w_dave = &mut w.dave.rgb;
+    let mut stock = create_stock();
+
+    // alice_utxo
+    let utxo_alice = w_alice
+        .all_utxos()
+        .find(|u| RgbKeychain::contains_rgb(u.terminal.keychain))
+        .unwrap();
+
+    println!(
+        "alice utxo: {:?}",
+        w_alice.all_utxos().collect::<HashSet<_>>()
+    );
+    // issue contract A
+    let c_dna = create_contract(&stock, &utxo_alice, Method::OpretFirst, "DNA", 1000);
+    let c_dna_id = c_dna.contract_id();
+    println!("contractid: {}", c_dna_id);
+
+    let mut any_resolver = AnyResolver::esplora_blocking(ESPLORA_URL).unwrap();
+    stock.import_contract(c_dna, &mut any_resolver).unwrap();
+
+    // alice_utxo
+    let utxo_bob = w_bob
+        .all_utxos()
+        .find(|u| RgbKeychain::contains_rgb(u.terminal.keychain))
+        .unwrap();
+    // issue contract B
+    let c_rna = create_contract(&stock, &utxo_bob, Method::OpretFirst, "RNA", 1000);
+    let c_rna_id = c_rna.contract_id();
+    println!("contractid: {}", c_rna_id);
+    stock.import_contract(c_rna, &mut any_resolver).unwrap();
+
+    let invb = get_vout_invoice("RGB20Fixed", &w_bob, c_dna_id, 10);
+    let mut param = TransferParams::with(400_u64.into(), 0_u64.into());
+    param.tx.change_keychain = RgbKeychain::Rgb.into();
+    use psrgbt::Beneficiary as RgbBeneficiary;
+    let beneficiary = match invb.beneficiary.into_inner() {
+        Beneficiary::BlindedSeal(_) => panic!("invalid beneficiary"),
+        Beneficiary::WitnessVout(payload) => RgbBeneficiary::new(
+            Address::new(payload, invb.address_network()),
+            param.min_amount,
+        ),
+    };
+    let (mut psbt, _meta) = w_alice
+        .construct_psbt(
+            vec![utxo_alice.into_outpoint()],
+            vec![&beneficiary],
+            param.tx,
+        )
+        .unwrap();
+
+    // let beneficiary_script = match invb.beneficiary.into_inner() {
+    //     Beneficiary::WitnessVout(script) => script,
+    //     _ => panic!("invalid beneficiary"),
+    // };
+    psbt.input_mut(0).unwrap().sighash_type = Some(SighashType {
+        flag: SighashFlag::None,
+        anyone_can_pay: true,
+    });
+
+    psbt.sort_outputs_by(|o| Reverse(o.amount)).unwrap();
+    assert!(psbt.output(0).unwrap().amount != Sats::ZERO);
+    assert!(psbt.output(1).unwrap().amount == Sats::ZERO);
+
+    let alice_change_address = psbt.output(0).unwrap().script.clone();
+    let alice_change_address =
+        Address::with(&alice_change_address, invb.address_network()).unwrap();
+
+    let prev_output = ExplicitSeal::with(
+        Method::OpretFirst,
+        utxo_alice.outpoint.txid,
+        utxo_alice.outpoint.vout,
+    );
+    let mut batch_dna = stock
+        .compose(
+            &[invb.clone()],
+            vec![XChain::Bitcoin(prev_output)],
+            Method::OpretFirst,
+            [Some(Vout::from_u32(1))].into(),
+            |_, _, _| Some(Vout::from_u32(0)),
+        )
+        .unwrap();
+
+    // println!("dna###### {}", prev_output.outpoint().unwrap());
+    // for i in batch_dna.clone() {
+    //     println!("{:#?}", i);
+    // }
+    let inva = get_address_invoice("RGB20Fixed", alice_change_address, c_rna_id, 20);
+    // use psbt::PsbtConstructor;
+    let _input = psbt.construct_input_expect(
+        psbt::Prevout::new(utxo_bob.outpoint, utxo_bob.value),
+        w_bob.wallet().descriptor(),
+        utxo_bob.terminal,
+        SeqNo::from_consensus_u32(u32::MAX),
+    );
+    psbt.output_mut(1).unwrap().amount = utxo_bob.value - 300_u64.into();
+
+    let prev_output = ExplicitSeal::with(
+        Method::OpretFirst,
+        utxo_bob.outpoint.txid,
+        utxo_bob.outpoint.vout,
+    );
+    let batch_rna = stock
+        .compose(
+            &[inva.clone()],
+            vec![XChain::Bitcoin(prev_output)],
+            Method::OpretFirst,
+            [Some(Vout::from_u32(0))].into(),
+            |_, _, _| Some(Vout::from_u32(1)),
+        )
+        .unwrap();
+    // println!("rna###### {}", prev_output.outpoint().unwrap());
+    // for i in batch_rna.clone() {
+    //     println!("{:#?}", i);
+    // }
+    // combine commitments
+    batch_dna.blanks.extend(batch_rna).unwrap();
+    let output = psbt.construct_output_expect(ScriptPubkey::op_return(&[]), Sats::ZERO);
+    output.set_opret_host().expect("just created");
+    psbt.complete_construction();
+    // println!("combine######");
+    // for i in batch_dna.clone() {
+    //     println!("{:#?}", i);
+    // }
+    use psrgbt::RgbPsbt;
+    psbt.rgb_embed(batch_dna).unwrap();
+
+    let _consignment = w_alice
+        .transfer(&mut stock, &[inva, invb], &mut psbt)
+        .unwrap();
+
+    let mut pa = sign_psbt(&w.alice.bdk, &psbt);
+    let pb = sign_psbt(&w.bob.bdk, &psbt);
+    pa.combine(pb).unwrap();
+    // println!("{:#?}", pa.clone());
+    only_broad_psbt(pa);
+    // w_alice.to_sync();
+    // w_bob.to_sync();
+    accept_consign(&mut stock, _consignment);
+    w_alice.to_sync();
+    w_bob.to_sync();
+    println!(
+        "alice utxo: {:?}",
+        w_alice.all_utxos().collect::<HashSet<_>>()
+    );
     print_history(&stock, w_alice, w_bob, &w.dave.rgb);
 }
 
@@ -400,6 +570,7 @@ fn sign_psbt(w: &bdk::Wallet<MemoryDatabase>, psbt: &Psbt) -> PartiallySignedTra
 
     let mut opts = SignOptions::default();
     opts.trust_witness_utxo = true;
+    opts.allow_all_sighashes = true;
     let f = w.sign(&mut p, opts).unwrap();
     println!("%%%%%%% {:#?}", f);
     p
